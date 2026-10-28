@@ -14,6 +14,17 @@ kubectl apply -n default -f ./KubePodCreator/k8s/
 kubectl rollout status -n default deployment/pod-api-deployment
 ```
 
+Scriptet bygger `pod-api:1.0` og `game-server:1.0` og indlæser dem i kind-noden.
+Navnene matcher projektets YAML og C#-kode. Kontrollér, at begge images fremgår af scriptets sidste output.
+
+## 2. Start pod-creator
+
+```powershell
+kubectl apply -n default -f ./KubePodCreator/k8s/
+kubectl rollout status -n default deployment/pod-api-deployment
+kubectl get pods,services -n default
+```
+
 Scalar: http://localhost:8080/scalar
 
 Ved rebuild: kør scriptet igen og derefter `kubectl rollout restart -n default deployment/pod-api-deployment`.
@@ -36,6 +47,8 @@ kubectl get pods,services -n default -l demo=pod-creator
 ## 3. List pods og afprøv rettigheder
 
 Kald GET `/PodCreator/Pods` i Scalar, og sammenlign loggen med pod-listen:
+
+Åbn Scalar og kald GET `/PodCreator/Pods`. Endpointet skriver pod-navnene i API'ets log.
 
 ```powershell
 kubectl logs -n default deployment/pod-api-deployment --tail=80
