@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-api-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-api
+  template:
+    metadata:
+      labels:
+        app: pod-api
+    spec:
+      serviceAccountName: pod-api-service-account
+      containers:
+      - name: pod-api-container
+        image: pod-api:1.0
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8080
