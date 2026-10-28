@@ -1,118 +1,72 @@
-# KubePodCreator – ServiceAccount og RBAC
+# Øvelse – game-servere i Kubernetes
 
-Et enkelt undervisningseksempel med .NET 10:
+Kør det færdige eksempel, undersøg ressourcerne og afprøv RBAC. I skal ikke skrive ny kode.
 
-- **KubePodCreator:** REST-API, som opretter game-server-pods og Services via Kubernetes-API'et.
-- **KubeGameServer:** TCP-server på port 7777, der sender beskeder tilbage til klienten.
-- **KubeClient:** Beder om en server, får adresse og port og forbinder via TCP.
+**Forudsætninger:** .NET 10, Docker Desktop med kind og én node (`desktop-control-plane`) samt kubectl.
+Kør kommandoerne fra repoets rod. Ressourcerne oprettes i `default`.
 
-## Hvordan vælges porten?
-
-1. API'et opretter game-serverens pod og en NodePort-Service.
-2. Kubernetes tildeler en ledig NodePort, eksempelvis 31306.
-3. API'et ændrer Servicen til LoadBalancer med `port: 31306` og `targetPort: 7777`.
-4. API'et venter på pod og LoadBalancer og kontrollerer, at TCP-serveren svarer.
-5. Klienten modtager `127.0.0.1:31306` og forbinder uden ekstra netværkskode.
-
-Porten vælges af Kubernetes, ikke af en tæller i API'et. Derfor kan flere pod-creators
-oprette servere samtidigt. Hver server får sit eget navn, sin egen Service og sin egen port.
-
-**Klient → LoadBalancer på 8080 → pod-creator → Kubernetes-API → ny game-server + Service.**
-
-Derefter: **Klient → localhost:tildelt port → game-server:7777.**
-
-LoadBalancer bruges til Windows-adgangen, fordi en NodePort i Docker Desktops kind-node
-ikke automatisk publiceres på Windows. NodePort bruges her til at reservere en ledig port.
-Dette er et lokalt eksempel til **Docker Desktop med kind og én node**; localhost-adressen
-og LoadBalancer-publiceringen er tilpasset dette miljø.
-
-## 1. Byg og indlæs images
-
-Forudsætninger: .NET 10 SDK, Docker Desktop med kind og kubectl.
-Kør fra repoets rod i PowerShell:
+## 1. Byg og start
 
 ```powershell
+kubectl config use-context docker-desktop
 .\BuildAndCopyImages.ps1
+kubectl apply -n default -f ./KubePodCreator/k8s/
+kubectl rollout status -n default deployment/pod-api-deployment
 ```
 
-Scriptet bygger og indlæser `pod-api:1.0` og `game-server:1.0` i noden
-`desktop-control-plane`. Navnene matcher YAML og C#-koden.
+Scalar: http://localhost:8080/scalar
 
-## 2. Start API'et
+Ved rebuild: kør scriptet igen og derefter `kubectl rollout restart -n default deployment/pod-api-deployment`.
+
+## 2. Prøv to klienter
+
+Kør i to terminaler:
 
 ```powershell
-kubectl apply -f ./KubePodCreator/k8s/
-kubectl rollout status deployment/pod-api-deployment
+dotnet run --project KubeClient -- http://localhost:8080
 ```
 
-Ved rebuild med samme image-tag skal en eksisterende API-deployment genstartes:
+Lad begge klienter være åbne. Send beskeder og kontrollér, at de får svar fra hver sin server med forskellige porte.
+Find servernavnene i outputtet:
 
 ```powershell
-kubectl rollout restart deployment/pod-api-deployment
-kubectl rollout status deployment/pod-api-deployment
+kubectl get pods,services -n default -l demo=pod-creator
 ```
 
-Åbn http://localhost:8080/scalar. POST `/PodCreator/CreateGameServer` opretter en server.
-API'et kører med `pod-api-service-account`. Role giver `get`, `create` og `update` på
-pods og Services i `default`. RoleBinding knytter kontoen til rollen.
-`update` bruges, når API'et ændrer Servicen fra NodePort til LoadBalancer.
+## 3. List pods og afprøv rettigheder
 
-## 3. Prøv klienten
+Kald GET `/PodCreator/Pods` i Scalar, og sammenlign loggen med pod-listen:
 
 ```powershell
-dotnet run --project KubeClient
+kubectl logs -n default deployment/pod-api-deployment --tail=80
+kubectl get pods -n default
 ```
 
-Klienten opretter en server og forbinder automatisk. Skriv en besked og se samme tekst
-komme tilbage. Tom linje afslutter klienten. Start flere klienter i hver sin terminal:
-de skal få forskellige porte og kunne sende beskeder samtidigt.
-
-Se ressourcerne:
+Fjern RoleBinding:
 
 ```powershell
-kubectl get pods,services -l demo=pod-creator
+kubectl delete rolebinding pod-creator-binding -n default
 ```
 
-For en game-server kan `PORT(S)` eksempelvis vise `31306:31306/TCP`.
-Det første tal er nu LoadBalancerens Service-port; det andet er den reserverede NodePort.
-`targetPort` er fortsat 7777.
-
-## 4. Prøv RBAC
+Kald POST `/PodCreator/CreateGameServer` i Scalar. Det skal fejle; find `Forbidden` i API'ets log.
+Gendan rettighederne og kontrollér, at en ny klient igen kan oprette og forbinde til en server:
 
 ```powershell
-kubectl delete rolebinding pod-creator-binding
+kubectl apply -n default -f ./KubePodCreator/k8s/KubePodServiceAccount.yml
 ```
 
-Kald POST-endpointet i Scalar. Det fejler nu, fordi API'et ikke længere må oprette pods.
-Se Kubernetes-fejlen `Forbidden` i loggen:
+## 4. Ryd op
+
+Afslut klienterne med en tom linje. Slet derefter øvelsens game-servere, pod-creator og RBAC:
 
 ```powershell
-kubectl logs deployment/pod-api-deployment --tail=80
+kubectl delete pod,service -n default -l demo=pod-creator
+kubectl delete -n default -f ./KubePodCreator/k8s/
 ```
 
-Gendan rettighederne og prøv igen:
+## Færdig, når
 
-```powershell
-kubectl apply -f .\KubePodCreator\k8s\KubePodServiceAccount.yml
-```
-
-## Øvelsen er færdig, når du har
-
-- Oprettet en server gennem klienten og modtaget et TCP-svar.
-- Kørt to klienter samtidigt med hver sin game-server og port.
-- Set oprettelsen fejle uden RoleBinding og virke efter gendannelse.
-- Forklaret ServiceAccount (identitet), Role (tilladelser) og RoleBinding (tildeling).
-- Ryddet op.
-
-## Oprydning
-
-Game-serverne slettes ikke automatisk, når klienterne afsluttes.
-Ved fejl under oprettelsen kan der også være ressourcer tilbage; samme kommando rydder dem op.
-
-```powershell
-kubectl delete pod,service -l demo=pod-creator
-kubectl delete -f ./KubePodCreator/k8s/
-```
-
-Eksemplet holder bevidst fokus på oprettelse, porttildeling, RBAC og TCP-kommunikation.
-Det indeholder ikke matchmaking, automatisk levetid eller produktionsklar fejlhåndtering.
+- To klienter har fået hver sin server og sendt/modtaget beskeder samtidigt.
+- I har set pod-navnene i API-loggen og demonstreret fejl uden RoleBinding og succes efter gendannelse.
+- I kan forklare ServiceAccount, Role, RoleBinding og hvordan Servicen finder den rigtige pod.
+- Øvelsens ressourcer er ryddet op.
